@@ -1,15 +1,21 @@
-// p5.js - Simulación de partículas con color según velocidad del viento (0 a 28)
-var num = 361 * 182;
-var noiseScale = 100, noiseStrength = 1;
-var particles = [];
-var particleCount = 40000; // Cantidad de partículas en la simulación
+// p5.js - Simulación de partículas con mapa de fondo y zoom dinámico
+let num = 361 * 182;
+let particles = [];
+let particleCount = 10000; // Cantidad base de partículas en la simulación
+
+var noiseScale = 500, noiseStrength = 1;
 
 let magnitud = []; // Array con la magnitud del viento en cada punto del grid
 let direction = []; // Array con la dirección del viento en cada punto del grid
 let windData;
+let mapaMundi;
+
+let zoomScale = 1;
+let useInterpolation = false; // Toggle para usar interpolación bilineal
 
 function preload() {
   windData = loadJSON('current-wind-surface-level-gfs-1.0.json');
+  mapaMundi = loadImage('mapa2.png'); // Asegúrate de tener este archivo
 }
 
 function processWindData(data) {
@@ -36,7 +42,7 @@ function processWindData(data) {
 function setup() {
   createCanvas(windowWidth, windowHeight);
   noStroke();
-  colorMode(HSB, 360, 255, 255, 255); // Configuración del modo de color HSB (Hue, Saturation, Brightness)
+  colorMode(HSB, 360, 255, 255, 255);
   processWindData(windData);
 
   // Crear las partículas iniciales
@@ -47,6 +53,12 @@ function setup() {
 
 function draw() {
   background(0, 10); // Fondo negro con transparencia para crear un efecto de estela
+  scale(zoomScale);
+  image(mapaMundi, 0, 0, width, height);
+
+  // Ajustar la cantidad de partículas según el zoom
+  let desiredParticleCount = int(particleCount * zoomScale * zoomScale);
+  adjustParticleCount(desiredParticleCount);
 
   // Actualizar y dibujar todas las partículas
   for (let particle of particles) {
@@ -55,31 +67,109 @@ function draw() {
   }
 }
 
+// Función para ajustar la cantidad de partículas según el zoom
+function adjustParticleCount(desiredCount) {
+  if (particles.length < desiredCount) {
+    let countToAdd = desiredCount - particles.length;
+    for (let i = 0; i < countToAdd; i++) {
+      particles.push(new Particle());
+    }
+  } else if (particles.length > desiredCount) {
+    particles.splice(desiredCount, particles.length - desiredCount);
+  }
+}
+
+// Función de zoom con la rueda del ratón
+function mouseWheel(event) {
+  zoomScale += event.delta * 0.002;
+  zoomScale = constrain(zoomScale, 0.5, 5);
+}
+
+// Función para interpolar ángulos correctamente
+function lerpAngle(a0, a1, t) {
+  let max = TWO_PI;
+  let da = (a1 - a0) % max;
+  da = ((2 * da) % max) - da;
+  return (a0 + da * t) % max;
+}
+
+// Función para obtener el vector interpolado
+function getInterpolatedVector(x, y) {
+  let gridX = (x / zoomScale) * (360 / width);
+  let gridY = (y / zoomScale) * (181 / height);
+
+  let x0 = Math.floor(gridX);
+  let y0 = Math.floor(gridY);
+  let x1 = x0 + 1;
+  let y1 = y0 + 1;
+
+  let tx = gridX - x0;
+  let ty = gridY - y0;
+
+  let idx00 = x0 + y0 * 361;
+  let idx10 = x1 + y0 * 361;
+  let idx01 = x0 + y1 * 361;
+  let idx11 = x1 + y1 * 361;
+
+  // Verificar que los índices estén dentro de los límites
+  if (idx00 >= 0 && idx11 < magnitud.length) {
+    let angle00 = direction[idx00];
+    let mag00 = magnitud[idx00];
+    let angle10 = direction[idx10];
+    let mag10 = magnitud[idx10];
+    let angle01 = direction[idx01];
+    let mag01 = magnitud[idx01];
+    let angle11 = direction[idx11];
+    let mag11 = magnitud[idx11];
+
+    // Interpolación bilineal de magnitudes
+    let mag0 = lerp(mag00, mag10, tx);
+    let mag1 = lerp(mag01, mag11, tx);
+    let mag = lerp(mag0, mag1, ty);
+
+    // Interpolación bilineal de ángulos
+    let angle0 = lerpAngle(angle00, angle10, tx);
+    let angle1 = lerpAngle(angle01, angle11, tx);
+    let angle = lerpAngle(angle0, angle1, ty);
+
+    return { mag, angle };
+  } else {
+    // Valores por defecto si está fuera de los límites
+    return { mag: 0, angle: 0 };
+  }
+}
+
 // Clase Particle para manejar cada partícula individual
 class Particle {
   constructor() {
-    this.pos = createVector(random(width), random(height));
-    this.vel = createVector(0, 0);
-    this.acc = createVector(0, 0);
-    this.maxSpeed = 1;
-    this.lifespan = random(100,400); // Vida útil de la partícula
-    this.age = 0;
+    this.reset();
   }
 
   update() {
-    // Obtener la posición en la cuadrícula del campo vectorial
-    let gridX = Math.floor(this.pos.x / 3.5);
-    let gridY = Math.floor(this.pos.y / 4);
-    let index = gridX + gridY * 361;
+    let angle, mag;
+    if (useInterpolation) {
+      // Usar interpolación bilineal
+      let vector = getInterpolatedVector(this.pos.x, this.pos.y);
+      angle = vector.angle;
+      mag = vector.mag;
+    } else {
+      // Usar vector del grid sin interpolación
+      let gridX = Math.floor((this.pos.x / zoomScale) * (360 / width));
+      let gridY = Math.floor((this.pos.y / zoomScale) * (181 / height));
+      let index = gridX + gridY * 361;
+      if (index >= 0 && index < magnitud.length) {
+        angle = direction[index];
+        mag = magnitud[index];
+      } else {
+        angle = 0;
+        mag = 0;
+      }
+    }
 
-    if (index >= 0 && index < magnitud.length) {
-      // Direccionar la partícula según el vector en el grid
-      let angle = direction[index];
-      let mag = magnitud[index];
-
-      // Calcular la aceleración en base a la dirección y magnitud
+    if (mag > 0) {
+      // Calcular la aceleración basada en la dirección y magnitud
       let force = p5.Vector.fromAngle(angle);
-      force.setMag(map(mag, 0, 28.7, 0, 0.5)); // Ajustar la fuerza según la magnitud (0 a 28)
+      force.setMag(map(mag, 0, 28.7, 0, 0.5));
       this.acc.add(force);
 
       // Actualizar velocidad y posición
@@ -94,31 +184,44 @@ class Particle {
         this.reset();
       }
     } else {
-      this.reset(); // Resetear si la partícula está fuera del rango del grid
+      this.reset(); // Resetear si está fuera del rango
     }
   }
 
-  // Dibujar la partícula con un color basado en la magnitud del viento
   display() {
-    let gridX = Math.floor(this.pos.x / 3.5);
-    let gridY = Math.floor(this.pos.y / 4);
-    let index = gridX + gridY * 361;
+    // Ajustar el tamaño de la partícula según el zoom
+    let particleSize = 2 / zoomScale;
+    particleSize = constrain(particleSize, 0.5, 5); // Limitar el tamaño
 
-    if (index >= 0 && index < magnitud.length) {
-      let mag = magnitud[index];
-      
-      // Mapa de color según la velocidad del viento (0 a 28)
-      let colorHue = map(mag, 0, 28, 240, 0); // 240 (azul) a 0 (rojo)
-      fill(color(colorHue, 255, 255, 150)); // Usar color HSB con transparencia
-      ellipse(this.pos.x, this.pos.y, 0.5); // Dibujar la partícula como un círculo pequeño
+    // Dibujar la partícula
+    let mag;
+    if (useInterpolation) {
+      mag = getInterpolatedVector(this.pos.x, this.pos.y).mag;
+    } else {
+      let gridX = Math.floor((this.pos.x / zoomScale) * (360 / width));
+      let gridY = Math.floor((this.pos.y / zoomScale) * (181 / height));
+      let index = gridX + gridY * 361;
+      mag = magnitud[index] || 0;
     }
+
+    let colorHue = map(mag, 0, 28, 0, 240); // 240 (azul) a 0 (rojo)
+    fill(colorHue, 255, 255, 150); // Color HSB con transparencia 
+    ellipse(this.pos.x, this.pos.y, 2);
   }
 
-  // Resetear la partícula a una nueva posición aleatoria
   reset() {
-    this.pos = createVector(random(width), random(height));
+    // Calcular el tamaño del área visible
+    let visibleWidth = width / zoomScale;
+    let visibleHeight = height / zoomScale;
+
+    // Generar una nueva posición aleatoria dentro del área visible
+    let x = random(0, visibleWidth);
+    let y = random(0, visibleHeight);
+    this.pos = createVector(x, y);
     this.vel = createVector(0, 0);
     this.acc = createVector(0, 0);
+    this.maxSpeed = 2;
+    this.lifespan = random(100, 400);
     this.age = 0;
   }
 }
