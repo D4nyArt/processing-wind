@@ -1,28 +1,33 @@
 // p5.js - Simulación de partículas con mapa de fondo y zoom dinámico
-let num = 361 * 182;
-let particles = [];
-let particleCount = 100000; // Cantidad base de partículas en la simulación
 
-var noiseScale=500, noiseStrength=1;
+// Variables principales
+let num = 361 * 182; // Número de puntos en el grid global (361 x 182)
+let particles = []; // Array que almacena las partículas de la simulación
+let particleCount = 100000; // Cantidad base de partículas
 
-let magnitud = []; // Array con la magnitud del viento en cada punto del grid
-let direction = []; // Array con la dirección del viento en cada punto del grid
-let windData;
-let mapaMundi;
+var noiseScale = 500, noiseStrength = 1; // Configuración para efectos de ruido (no usados explícitamente)
 
-let zoomScale = 1;
+let magnitud = []; // Array que almacena la magnitud del viento en cada punto del grid
+let direction = []; // Array que almacena la dirección del viento en cada punto del grid
+let windData; // Variable para almacenar los datos del viento
+let mapaMundi; // Imagen de fondo del mapa mundial
 
+let zoomScale = 1; // Nivel de zoom inicial
+
+// Carga de datos y recursos antes de iniciar el programa
 function preload() {
-  windData = loadJSON('current-wind-surface-level-gfs-1.0.json');
-  mapaMundi = loadImage('mapamundi.png'); // Asegúrate de tener este archivo
+  windData = loadJSON('current-wind-surface-level-gfs-1.0.json'); // Datos del viento en formato JSON
+  mapaMundi = loadImage('mapamundi.png'); // Imagen del mapa mundial (debe estar en el proyecto)
 }
 
+// Procesar los datos del viento para calcular magnitudes y direcciones
 function processWindData(data) {
-  // Procesar los datos JSON del viento
+  // Datos de componentes u (horizontal) y v (vertical)
   let u_comp_info = data[0];
   let v_comp_info = data[1];
   let u_comp = [], v_comp = [];
 
+  // Extraer los datos de cada componente
   u_comp_info.data.forEach((comp, idx) => {
     u_comp[idx] = comp;
   });
@@ -31,24 +36,27 @@ function processWindData(data) {
     v_comp[idx] = comp;
   });
 
+  // Calcular magnitud y dirección del viento en cada punto
   for (let i = 0; i < u_comp.length; i++) {
-    magnitud[i] = Math.sqrt(u_comp[i] ** 2 + v_comp[i] ** 2);
-    let direct = Math.atan2(v_comp[i], u_comp[i]) + Math.PI;
-    direction[i] = direct % (2 * Math.PI);
+    magnitud[i] = Math.sqrt(u_comp[i] ** 2 + v_comp[i] ** 2); // Magnitud = sqrt(u^2 + v^2)
+    let direct = Math.atan2(v_comp[i], u_comp[i]) + Math.PI; // Dirección en radianes (ajustada entre 0 y 2*PI)
+    direction[i] = direct % (2 * Math.PI); // Normalización del ángulo
   }
 }
 
+// Configuración inicial del lienzo
 function setup() {
-  createCanvas(windowWidth, windowHeight);
-  noStroke();
-  colorMode(HSB, 360, 255, 255, 255);
-  processWindData(windData);
+  createCanvas(windowWidth, windowHeight); // Crear el lienzo del tamaño de la ventana
+  noStroke(); // Sin bordes para las partículas
+  colorMode(HSB, 360, 255, 255, 255); // Modo de color HSB con transparencia
+  processWindData(windData); // Procesar los datos del viento
 }
 
+// Bucle principal para dibujar en cada frame
 function draw() {
-  background(0, 0, 0, 10); // Fondo negro transparente
-  scale(zoomScale);
-  image(mapaMundi, 0, 0, width, height);
+  background(0, 0, 0, 10); // Fondo negro con transparencia
+  scale(zoomScale); // Escalar según el nivel de zoom
+  image(mapaMundi, 0, 0, width, height); // Dibujar el mapa de fondo
 
   // Ajustar la cantidad de partículas según el zoom
   let desiredParticleCount = int(particleCount * zoomScale * zoomScale);
@@ -56,152 +64,128 @@ function draw() {
 
   // Actualizar y dibujar todas las partículas
   for (let particle of particles) {
-    particle.update();
-    particle.display();
+    particle.update(); // Actualizar estado
+    particle.display(); // Dibujar en pantalla
   }
 }
 
-// Función para ajustar la cantidad de partículas según el zoom
+// Ajustar la cantidad de partículas según el nivel de zoom
 function adjustParticleCount(desiredCount) {
   if (particles.length < desiredCount) {
-    let countToAdd = desiredCount - particles.length;
+    let countToAdd = desiredCount - particles.length; // Número de partículas a añadir
     for (let i = 0; i < countToAdd; i++) {
-      particles.push(new Particle());
+      particles.push(new Particle()); // Crear nuevas partículas
     }
   } else if (particles.length > desiredCount) {
-    particles.splice(desiredCount, particles.length - desiredCount);
+    particles.splice(desiredCount, particles.length - desiredCount); // Eliminar partículas sobrantes
   }
 }
 
+// Detectar el desplazamiento del ratón para hacer zoom
 function mouseWheel(event) {
-  zoomScale += event.delta * 0.001;
-  zoomScale = constrain(zoomScale, 0.5, 5);
+  zoomScale += event.delta * 0.001; // Ajustar el nivel de zoom
+  zoomScale = constrain(zoomScale, 0.5, 5); // Restringir entre 0.5x y 5x
 }
 
+// Convertir coordenadas de latitud y longitud a posiciones en píxeles
 function latLonToXY(lat, lon) {
-  let x = map(lon, -180, 180, 0, width);
-  let y = map(lat, -85, 85, height, 0); // Proyección equirectangular
-  return createVector(x, y);
+  let x = map(lon, -180, 180, 0, width); // Convertir longitud a posición x
+  let y = map(lat, -85, 85, height, 0); // Convertir latitud a posición y
+  return createVector(x, y); // Devolver como vector
 }
 
-// Función para interpolar ángulos correctamente
+// Interpolar correctamente entre dos ángulos
 function lerpAngle(a0, a1, t) {
-  let max = TWO_PI;
-  let da = (a1 - a0) % max;
-  da = ((2 * da) % max) - da;
-  return (a0 + da * t) % max;
+  let max = TWO_PI; // Máximo valor angular
+  let da = (a1 - a0) % max; // Diferencia angular
+  da = ((2 * da) % max) - da; // Ajustar al rango -PI a PI
+  return (a0 + da * t) % max; // Devolver el ángulo interpolado
 }
 
-// Función para obtener el vector interpolado
+// Obtener el vector interpolado (magnitud y dirección) para una posición
 function getInterpolatedVector(x, y) {
-  let gridX = (x / zoomScale) * (360 / width);
-  let gridY = (y / zoomScale) * (181 / height);
+  let gridX = (x / zoomScale) * (360 / width); // Escalar la posición x al grid
+  let gridY = (y / zoomScale) * (181 / height); // Escalar la posición y al grid
 
-  let x0 = Math.floor(gridX);
-  let y0 = Math.floor(gridY);
-  let x1 = x0 + 1;
-  let y1 = y0 + 1;
+  let x0 = Math.floor(gridX), y0 = Math.floor(gridY); // Índices del grid inferior
+  let x1 = x0 + 1, y1 = y0 + 1; // Índices del grid superior
 
-  let tx = gridX - x0;
-  let ty = gridY - y0;
+  let tx = gridX - x0, ty = gridY - y0; // Fracción de interpolación
 
-  let idx00 = x0 + y0 * 361;
+  let idx00 = x0 + y0 * 361; // Índices del grid para interpolar
   let idx10 = x1 + y0 * 361;
   let idx01 = x0 + y1 * 361;
   let idx11 = x1 + y1 * 361;
 
-  // Verificar que los índices estén dentro de los límites
+  // Comprobar que los índices están dentro de los límites
   if (idx00 >= 0 && idx11 < magnitud.length) {
-    let angle00 = direction[idx00];
-    let mag00 = magnitud[idx00];
-    let angle10 = direction[idx10];
-    let mag10 = magnitud[idx10];
-    let angle01 = direction[idx01];
-    let mag01 = magnitud[idx01];
-    let angle11 = direction[idx11];
-    let mag11 = magnitud[idx11];
+    let mag0 = lerp(magnitud[idx00], magnitud[idx10], tx);
+    let mag1 = lerp(magnitud[idx01], magnitud[idx11], tx);
+    let mag = lerp(mag0, mag1, ty); // Interpolación bilineal de magnitudes
 
-    // Interpolación bilineal de magnitudes
-    let mag0 = lerp(mag00, mag10, tx);
-    let mag1 = lerp(mag01, mag11, tx);
-    let mag = lerp(mag0, mag1, ty);
+    let angle0 = lerpAngle(direction[idx00], direction[idx10], tx);
+    let angle1 = lerpAngle(direction[idx01], direction[idx11], tx);
+    let angle = lerpAngle(angle0, angle1, ty); // Interpolación bilineal de ángulos
 
-    // Interpolación bilineal de ángulos
-    let angle0 = lerpAngle(angle00, angle10, tx);
-    let angle1 = lerpAngle(angle01, angle11, tx);
-    let angle = lerpAngle(angle0, angle1, ty);
-
-    return { mag, angle };
+    return { mag, angle }; // Vector interpolado
   } else {
-    // Valores por defecto si está fuera de los límites
-    return { mag: 0, angle: 0 };
+    return { mag: 0, angle: 0 }; // Fuera de rango
   }
 }
 
-// Clase Particle para manejar cada partícula individual
+// Clase Particle para manejar cada partícula individualmente
 class Particle {
   constructor() {
-    this.reset();
+    this.reset(); // Inicializar posición y propiedades
   }
 
   update() {
-    // Obtener la posición interpolada en el grid
-    let gridX = (this.pos.x / zoomScale) * (360 / width);
-    let gridY = (this.pos.y / zoomScale) * (181 / height);
-
-    // Obtener el vector interpolado
+    // Obtener el vector de viento interpolado en la posición actual
     let vector = getInterpolatedVector(this.pos.x, this.pos.y);
-    let angle = vector.angle;
-    let mag = vector.mag;
+    let angle = vector.angle; // Dirección del viento
+    let mag = vector.mag; // Magnitud del viento
 
     if (mag > 0) {
-      // Calcular la aceleración basada en la dirección y magnitud
+      // Calcular la fuerza del viento y aplicarla
       let force = p5.Vector.fromAngle(angle);
-      force.setMag(map(mag, 0, 28.7, 0, 0.5));
+      force.setMag(map(mag, 0, 28.7, 0, 0.5)); // Escalar la magnitud
       this.acc.add(force);
 
       // Actualizar velocidad y posición
       this.vel.add(this.acc);
-      this.vel.limit(this.maxSpeed);
+      this.vel.limit(this.maxSpeed); // Limitar la velocidad máxima
       this.pos.add(this.vel);
-      this.acc.mult(0);
+      this.acc.mult(0); // Reiniciar aceleración
 
-      // Envejecer la partícula
+      // Envejecer la partícula y resetear si supera su vida útil
       this.age++;
       if (this.age > this.lifespan) {
         this.reset();
       }
     } else {
-      this.reset(); // Resetear si está fuera del rango
+      this.reset(); // Resetear si está fuera del rango válido
     }
   }
 
   display() {
-    // Ajustar el tamaño de la partícula según el zoom
-    let particleSize = 2 / zoomScale;
-    particleSize = constrain(particleSize, 0.5, 5); // Limitar el tamaño
+    let particleSize = 2 / zoomScale; // Ajustar tamaño según zoom
+    particleSize = constrain(particleSize, 0.5, 5); // Limitar tamaño
 
-    // Dibujar la partícula
-    let mag = getInterpolatedVector(this.pos.x, this.pos.y).mag;
-
-    let colorHue = map(mag, 0, 28, 0, 240); // 240 (azul) a 0 (rojo)
+    let mag = getInterpolatedVector(this.pos.x, this.pos.y).mag; // Obtener magnitud
+    let colorHue = map(mag, 0, 28, 0, 240); // Escalar de rojo (0) a azul (240)
     fill(colorHue, 255, 255, 150); // Color HSB con transparencia
-    ellipse(this.pos.x, this.pos.y, particleSize);
+    ellipse(this.pos.x, this.pos.y, particleSize); // Dibujar partícula
   }
 
   reset() {
-    // Calcular el tamaño del área visible
-    let visibleWidth = width / zoomScale;
+    // Generar nueva posición aleatoria dentro del área visible
+    let visibleWidth = width / zoomScale; 
     let visibleHeight = height / zoomScale;
-
-    // Generar una nueva posición aleatoria dentro del área visible
-    let x = random(0, visibleWidth);
-    let y = random(0, visibleHeight);
-    this.pos = createVector(x, y);
+    this.pos = createVector(random(0, visibleWidth), random(0, visibleHeight));
     this.vel = createVector(0, 0);
     this.acc = createVector(0, 0);
-    this.maxSpeed = 2;
-    this.lifespan = random(100, 400);
-    this.age = 0;
+    this.maxSpeed = 2; // Velocidad máxima de la partícula
+    this.lifespan = random(100, 400); // Tiempo de vida de la partícula
+    this.age = 0; // Reiniciar la edad
   }
 }
